@@ -1,0 +1,249 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz PRO: Smart Fix</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <style>
+        :root {
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --success: #22c55e;
+            --danger: #ef4444;
+        }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); display: flex; justify-content: center; padding: 20px; transition: background-color 0.2s; }
+        .container { background: white; padding: 2rem; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 650px; }
+        .hidden { display: none; }
+        
+        .red-flash { background-color: #fee2e2 !important; }
+        .green-flash { background-color: #d1fae5 !important; }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-8px); }
+            75% { transform: translateX(8px); }
+        }
+        .shake-effect { animation: shake 0.2s ease-in-out 2; }
+
+        button { cursor: pointer; padding: 12px 20px; border: none; border-radius: 8px; background: var(--primary); color: white; font-weight: 600; margin-bottom: 8px; transition: 0.2s; }
+        button:hover { opacity: 0.9; }
+        
+        .opt-btn { background: #f1f5f9; color: #1e293b; border: 2px solid #e2e8f0; text-align: left; width: 100%; }
+        .opt-btn:hover { background: #e2e8f0; }
+
+        #progress-bar { height: 8px; background: #e2e8f0; border-radius: 4px; margin-bottom: 20px; }
+        #progress-fill { height: 100%; background: var(--primary); width: 0%; transition: width 0.3s; border-radius: 4px; }
+
+        .result-card { text-align: center; }
+        .big-score { font-size: 2.5rem; font-weight: 800; color: var(--primary); margin: 10px 0; }
+        
+        .review-container { margin-top: 30px; text-align: left; border-top: 2px solid #f1f5f9; padding-top: 20px; }
+        .review-item { padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid #ccc; background: #fdfdfd; }
+        .review-item.is-correct { border-left-color: var(--success); background: #f0fdf4; }
+        .review-item.is-wrong { border-left-color: var(--danger); background: #fef2f2; }
+        .review-q { font-weight: 700; margin-bottom: 5px; display: block; }
+        .review-ans { font-size: 0.9rem; color: #475569; }
+        .correct-mark { color: var(--success); font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container" id="game-container">
+    <div id="main-menu">
+        <h1>Онлайн тесты</h1>
+        <div id="status-info" style="margin-bottom:15px; color:#64748b;">Вопросов в базе: <span id="q-count">0</span></div>
+        <div style="display: grid; gap: 10px;">
+            <button id="start-btn" class="hidden" onclick="startQuiz()">Начать тест</button>
+            <label style="background: #059669; color: white; padding: 12px; border-radius: 8px; text-align: center; cursor: pointer; font-weight: 600;">
+                Загрузить Excel
+                <input type="file" id="excel-input" accept=".xlsx, .xls" style="display:none">
+            </label>
+            <button style="background:#64748b" onclick="showScreen('create-screen')">Добавить вручную</button>
+            <button id="clear-btn" style="background:#94a3b8; font-size:0.8rem;" class="hidden" onclick="clearMemory()">Сбросить базу</button>
+        </div>
+    </div>
+
+    <div id="create-screen" class="hidden">
+        <h2>Новый вопрос</h2>
+        <input type="text" id="q-text" placeholder="Текст вопроса" style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ddd; border-radius:5px;">
+        <input type="text" class="opt" placeholder="Правильный ответ" style="width:100%; padding:10px; margin-bottom:5px; border:1px solid #ddd; border-radius:5px;">
+        <input type="text" class="opt" placeholder="Вариант 2" style="width:100%; padding:10px; margin-bottom:5px; border:1px solid #ddd; border-radius:5px;">
+        <input type="text" class="opt" placeholder="Вариант 3" style="width:100%; padding:10px; margin-bottom:15px; border:1px solid #ddd; border-radius:5px;">
+        <button onclick="addQuestion()" style="width:100%">Сохранить</button>
+        <button onclick="showScreen('main-menu')" style="width:100%; margin-top:10px; background:#64748b;">Назад</button>
+    </div>
+
+    <div id="game-screen" class="hidden">
+        <div id="progress-bar"><div id="progress-fill"></div></div>
+        <h2 id="display-question" style="margin-bottom:20px;"></h2>
+        <div id="display-options" style="display: grid; gap:10px;"></div>
+    </div>
+
+    <div id="result-screen" class="hidden" class="result-card">
+        <h2>Ваш результат</h2>
+        <div class="big-score"><span id="res-correct">0</span> / <span id="res-total">0</span></div>
+        <p>Время: <strong id="res-time">00:00</strong> | Точность: <strong id="res-percent">0</strong>%</p>
+        <div class="review-container" id="review-list"></div>
+        <button onclick="location.reload()" style="width:100%; padding:15px; margin-top:20px;">Пройти еще раз</button>
+    </div>
+</div>
+
+<script>
+    let currentQuiz = [];
+    let userAnswers = [];
+    let gameIndex = 0;
+    let score = 0;
+    let startTime;
+
+    window.onload = () => {
+        const saved = localStorage.getItem('quiz_v4');
+        if (saved) {
+            currentQuiz = JSON.parse(saved);
+            updateUI();
+        }
+    };
+
+    function updateUI() {
+        const count = currentQuiz.length;
+        document.getElementById('q-count').innerText = count;
+        document.getElementById('start-btn').classList.toggle('hidden', count === 0);
+        document.getElementById('clear-btn').classList.toggle('hidden', count === 0);
+    }
+
+    document.getElementById('excel-input').addEventListener('change', function(e) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const workbook = XLSX.read(new Uint8Array(event.target.result), {type: 'array'});
+            const data = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+            currentQuiz = data.map(row => ({
+                question: String(row.question || '').trim(),
+                correct: String(row.correct || '').trim(), // Очистка пробелов
+                options: [
+                    String(row.correct || '').trim(), 
+                    String(row.opt1 || '').trim(), 
+                    String(row.opt2 || '').trim()
+                ].filter(Boolean)
+            }));
+            localStorage.setItem('quiz_v4', JSON.stringify(currentQuiz));
+            updateUI();
+        };
+        reader.readAsArrayBuffer(e.target.files[0]);
+    });
+
+    function addQuestion() {
+        const q = document.getElementById('q-text').value.trim();
+        const opts = Array.from(document.querySelectorAll('.opt')).map(i => i.value.trim()).filter(Boolean);
+        if(q && opts.length > 1) {
+            currentQuiz.push({ question: q, correct: opts[0], options: opts });
+            localStorage.setItem('quiz_v4', JSON.stringify(currentQuiz));
+            updateUI();
+            alert("Вопрос добавлен!");
+        }
+    }
+
+    function startQuiz() {
+        gameIndex = 0; score = 0; userAnswers = [];
+        startTime = new Date();
+        showScreen('game-screen');
+        renderQuestion();
+    }
+
+    function renderQuestion() {
+        const q = currentQuiz[gameIndex];
+        document.getElementById('display-question').innerText = q.question;
+        document.getElementById('progress-fill').style.width = ((gameIndex / currentQuiz.length) * 100) + '%';
+        
+        const container = document.getElementById('display-options');
+        container.innerHTML = '';
+        
+        const shuffled = [...q.options].sort(() => Math.random() - 0.5);
+        shuffled.forEach(opt => {
+            const btn = document.createElement('button');
+            btn.className = 'opt-btn';
+            btn.innerText = opt;
+            btn.onclick = () => handleAnswer(opt, q);
+            container.appendChild(btn);
+        });
+    }
+
+    function handleAnswer(selected, qObj) {
+        // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: trim() убирает пробелы при сравнении
+        const isCorrect = selected.trim() === qObj.correct.trim();
+        const bodyTag = document.body;
+        const gameContainer = document.getElementById('game-container');
+        
+        userAnswers.push({
+            question: qObj.question,
+            selected: selected,
+            correct: qObj.correct,
+            isCorrect: isCorrect
+        });
+
+        if (isCorrect) {
+            score++;
+            bodyTag.classList.add('green-flash');
+            confetti({ particleCount: 80, spread: 50, origin: { y: 0.8 } });
+            setTimeout(() => bodyTag.classList.remove('green-flash'), 400);
+        } else {
+            gameContainer.classList.add('shake-effect');
+            bodyTag.classList.add('red-flash');
+            setTimeout(() => {
+                gameContainer.classList.remove('shake-effect');
+                bodyTag.classList.remove('red-flash');
+            }, 400);
+        }
+
+        setTimeout(() => {
+            gameIndex++;
+            if(gameIndex < currentQuiz.length) renderQuestion();
+            else showFinalResults();
+        }, 500);
+    }
+
+    function showFinalResults() {
+        const timeDiff = Math.floor((new Date() - startTime) / 1000);
+        const timeStr = `${Math.floor(timeDiff/60).toString().padStart(2,'0')}:${(timeDiff%60).toString().padStart(2,'0')}`;
+        
+        document.getElementById('res-correct').innerText = score;
+        document.getElementById('res-total').innerText = currentQuiz.length;
+        document.getElementById('res-time').innerText = timeStr;
+        document.getElementById('res-percent').innerText = Math.round((score/currentQuiz.length)*100);
+
+        const listContainer = document.getElementById('review-list');
+        listContainer.innerHTML = '<h3>Разбор вопросов:</h3>';
+        
+        userAnswers.forEach((ans, idx) => {
+            const item = document.createElement('div');
+            item.className = `review-item ${ans.isCorrect ? 'is-correct' : 'is-wrong'}`;
+            item.innerHTML = `
+                <span class="review-q">${idx + 1}. ${ans.question}</span>
+                <div class="review-ans">
+                    Ваш ответ: <strong>${ans.selected}</strong> ${ans.isCorrect ? '✅' : '❌'}<br>
+                    ${!ans.isCorrect ? `Правильный ответ: <span class="correct-mark">${ans.correct}</span>` : ''}
+                </div>
+            `;
+            listContainer.appendChild(item);
+        });
+        showScreen('result-screen');
+    }
+
+    function clearMemory() {
+        if(confirm("Удалить базу?")) {
+            localStorage.removeItem('quiz_v4');
+            currentQuiz = [];
+            updateUI();
+        }
+    }
+
+    function showScreen(id) {
+        document.querySelectorAll('.container > div').forEach(div => div.classList.add('hidden'));
+        document.getElementById(id).classList.remove('hidden');
+    }
+</script>
+
+</body>
+</html>
